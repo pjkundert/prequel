@@ -1054,10 +1054,15 @@ body {
   max-width: 900px;
 }
 
-/* Header is now author · range · time on the left, actions pinned right. */
+/* Header is now author · range · time on the left, actions pinned right.
+   In a narrow split-view cell the row fills up, so `margin-left: auto` on the
+   actions contributes nothing — hence an explicit floor on the separation
+   below, and wrapping rather than crushing when even that won't fit. */
 .comment-header {
   justify-content: flex-start;
-  gap: 8px;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 4px;
 }
 
 .comment-lines {
@@ -1067,8 +1072,10 @@ body {
 .comment-tools {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-left: auto;
+  /* keeps the actions clear of the timestamp when the row is tight */
+  padding-left: 8px;
 }
 
 .comment-author {
