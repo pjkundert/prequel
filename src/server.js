@@ -52,7 +52,9 @@ const projectRoot = path.resolve(__dirname, '..');
 
 const DIFF_MODES = ['all', 'branch', 'working'];
 
-export function createServer({ repoRoot = null, defaultBase = null } = {}) {
+export function createServer({ repoRoot = null, defaultBase = null, defaultDiff = null } = {}) {
+  // The mode a bare '/' renders; ?diff= on the URL always wins.
+  const fallbackDiff = DIFF_MODES.includes(defaultDiff) ? defaultDiff : 'working';
   const app = express();
 
   app.set('view engine', 'ejs');
@@ -70,7 +72,7 @@ export function createServer({ repoRoot = null, defaultBase = null } = {}) {
     const view = req.query.view === 'unified' ? 'unified' : 'split';
     const colorMode = ['light', 'dark'].includes(req.query.mode) ? req.query.mode : 'auto';
     // ?diff=all|branch|working (which changes to show); ?base=<ref>.
-    const diffMode = DIFF_MODES.includes(req.query.diff) ? req.query.diff : 'working';
+    const diffMode = DIFF_MODES.includes(req.query.diff) ? req.query.diff : fallbackDiff;
     const requestedBase =
       (typeof req.query.base === 'string' && req.query.base ? req.query.base : null) || defaultBase;
 
