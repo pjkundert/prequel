@@ -232,6 +232,7 @@ document.addEventListener('click', (e) => {
   const segBtn = e.target.closest('.seg-btn');
   if (segBtn) {
     e.preventDefault();
+    if (segBtn.classList.contains('is-disabled')) return;
     goToParam(segBtn.getAttribute('data-param'), segBtn.getAttribute('data-value'));
     return;
   }
@@ -288,4 +289,14 @@ document.querySelectorAll('.viewed-checkbox').forEach((cb) => {
     cb.closest('.file').classList.toggle('is-collapsed', cb.checked);
     markTreeViewed(id, cb.checked);
   });
+});
+
+// Branch picker: review any local branch straight from git. Dropping `base`
+// lets the branch's recorded review base (if any) apply.
+document.getElementById('branch-picker')?.addEventListener('change', (e) => {
+  const params = new URLSearchParams(location.search);
+  params.set('branch', e.target.value);
+  params.delete('base');
+  params.set('diff', 'branch');
+  location.search = params.toString();
 });

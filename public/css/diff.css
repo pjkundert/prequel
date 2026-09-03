@@ -1134,3 +1134,8 @@ body {
   color: var(--fgColor-onEmphasis, #fff);
   background-color: var(--bgColor-attention-emphasis, #9a6700);
 }
+
+/* ?branch= reviews: the picker sits where the head pill was; modes that need
+   a working tree are disabled when the reviewed branch is not checked out. */
+.branch-picker { font: inherit; cursor: pointer; max-width: 28em; }
+.seg-btn.is-disabled { opacity: 0.4; cursor: not-allowed; pointer-events: auto; }

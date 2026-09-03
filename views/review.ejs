@@ -7,6 +7,7 @@
   data-view="<%= view %>"
   data-diff="<%= diffMode %>"
   data-branch="<%= head %>"
+  data-pinned="<%= pinned ? '1' : '0' %>"
   data-comments-enabled="<%= commentsEnabled ? '1' : '0' %>"
 >
 <head>
@@ -30,7 +31,15 @@
         <% } %>
         <h1 class="pr-title">Files changed</h1>
         <span class="pr-refs">
+          <% if (isRepo && branches.length) { %>
+          <select id="branch-picker" class="ref-pill branch-picker" title="Branch to review (any local branch; only the checked-out one has a working tree)">
+            <% for (const b of branches) { %>
+            <option value="<%= b %>"<%= b === head ? ' selected' : '' %>><%= b %><%= b === currentHead ? ' (checked out)' : '' %></option>
+            <% } %>
+          </select>
+          <% } else { %>
           <span class="ref-pill"><%= head %></span>
+          <% } %>
           <span class="ref-arrow">into</span>
           <span class="ref-pill"><%= base %></span>
         </span>
@@ -49,12 +58,12 @@
           <% } %>
           <% if (isRepo) { %>
           <span class="seg-toggle" role="group" aria-label="Changes to show">
-            <a class="seg-btn<%= diffMode === 'all' ? ' is-active' : '' %>"
-               href="?diff=all" data-param="diff" data-value="all" title="Branch commits + uncommitted + untracked">All</a>
+            <a class="seg-btn<%= diffMode === 'all' ? ' is-active' : '' %><%= pinned ? ' is-disabled' : '' %>"
+               href="?diff=all" data-param="diff" data-value="all" title="<%= pinned ? 'Only for the checked-out branch (' + currentHead + ')' : 'Branch commits + uncommitted + untracked' %>">All</a>
             <a class="seg-btn<%= diffMode === 'branch' ? ' is-active' : '' %>"
                href="?diff=branch" data-param="diff" data-value="branch" title="Committed changes on this branch vs base">Branch</a>
-            <a class="seg-btn<%= diffMode === 'working' ? ' is-active' : '' %>"
-               href="?diff=working" data-param="diff" data-value="working" title="Uncommitted + untracked changes">Working</a>
+            <a class="seg-btn<%= diffMode === 'working' ? ' is-active' : '' %><%= pinned ? ' is-disabled' : '' %>"
+               href="?diff=working" data-param="diff" data-value="working" title="<%= pinned ? 'Only for the checked-out branch (' + currentHead + ')' : 'Uncommitted + untracked changes' %>">Working</a>
           </span>
           <% } %>
           <span class="seg-toggle view-toggle" role="group" aria-label="Diff view">

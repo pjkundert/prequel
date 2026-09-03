@@ -62,9 +62,46 @@ export async function getHead(repoRoot) {
   return sha || 'HEAD';
 }
 
-async function mergeBase(repoRoot, base) {
+// A user-supplied ref, validated: it must name a commit and cannot look like
+// an option. Returns the ref as given, or null.
+export async function resolveRef(repoRoot, ref) {
+  if (!ref || typeof ref !== 'string' || ref.startsWith('-')) return null;
   try {
-    return (await git(repoRoot, ['merge-base', base, 'HEAD'])).trim();
+    await git(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    return ref;
+  } catch {
+    return null;
+  }
+}
+
+// Local branches, most recently committed first.
+export async function getBranches(repoRoot) {
+  const out = await git(repoRoot, [
+    'for-each-ref', '--format=%(refname:short)', '--sort=-committerdate', 'refs/heads',
+  ]).catch(() => '');
+  return out.split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+// A branch's recorded review base (`git config branch.<name>.reviewbase`),
+// so a review opens on exactly the change it was staged for.
+export async function getReviewBase(repoRoot, ref) {
+  if (!ref || ref.startsWith('-')) return null;
+  const out = await git(repoRoot, ['config', '--get', `branch.${ref}.reviewbase`], {
+    okCodes: [0, 1],
+  }).catch(() => '');
+  return out.trim() || null;
+}
+
+// The repository's common git dir (shared by all its worktrees), absolute:
+// what a client in any worktree can match this server against.
+export async function getGitCommonDir(repoRoot) {
+  const out = (await git(repoRoot, ['rev-parse', '--git-common-dir']).catch(() => '')).trim();
+  return out ? path.resolve(repoRoot, out) : null;
+}
+
+async function mergeBase(repoRoot, base, ref = 'HEAD') {
+  try {
+    return (await git(repoRoot, ['merge-base', base, ref])).trim();
   } catch {
     return base; // base may not share history (e.g. HEAD sentinel) — diff directly
   }
@@ -94,8 +131,12 @@ async function untrackedPatches(repoRoot) {
  *  - working: uncommitted changes (staged + unstaged) + untracked
  *  - all:     branch commits + working tree + untracked (default; superset)
  */
-export async function getDiff(repoRoot, { base, mode = 'all' } = {}) {
-  const head = await getHead(repoRoot);
+// `ref`, when given, is a branch other than the checked-out one: its committed
+// changes are diffed straight from git (mode is then always 'branch'); the
+// working tree belongs to HEAD alone.
+export async function getDiff(repoRoot, { base, mode = 'all', ref = null } = {}) {
+  const head = ref || (await getHead(repoRoot));
+  const target = ref || 'HEAD';
   const baseRef = base || (await getDefaultBase(repoRoot));
 
   let patch = '';
@@ -103,8 +144,8 @@ export async function getDiff(repoRoot, { base, mode = 'all' } = {}) {
     patch = await git(repoRoot, ['diff', ...DIFF_FLAGS, 'HEAD']);
     patch += await untrackedPatches(repoRoot);
   } else if (mode === 'branch') {
-    const mb = await mergeBase(repoRoot, baseRef);
-    patch = await git(repoRoot, ['diff', ...DIFF_FLAGS, mb, 'HEAD']);
+    const mb = await mergeBase(repoRoot, baseRef, target);
+    patch = await git(repoRoot, ['diff', ...DIFF_FLAGS, mb, target]);
   } else {
     // all
     const mb = await mergeBase(repoRoot, baseRef);
