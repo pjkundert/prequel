@@ -5,7 +5,15 @@ import fs from 'node:fs/promises';
 import { renderDiff, renderFileTree } from './render/renderer.js';
 import { highlightDiff, highlightLines } from './render/highlighter.js';
 import { annotateWordDiffs } from './render/wordDiff.js';
-import { getDiff, getBlobLines } from './git/gitService.js';
+import {
+  getDiff,
+  getBlobLines,
+  getHead,
+  getBranches,
+  getReviewBase,
+  getGitCommonDir,
+  resolveRef,
+} from './git/gitService.js';
 import { parseDiff, inferLanguage } from './git/diffParser.js';
 import { sampleDiff } from './sampleDiff.js';
 import {
@@ -71,19 +79,38 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     // ?view=split|unified (layout); ?mode=light|dark (color); default auto.
     const view = req.query.view === 'unified' ? 'unified' : 'split';
     const colorMode = ['light', 'dark'].includes(req.query.mode) ? req.query.mode : 'auto';
-    // ?diff=all|branch|working (which changes to show); ?base=<ref>.
-    const diffMode = DIFF_MODES.includes(req.query.diff) ? req.query.diff : fallbackDiff;
+    // ?branch=<ref>: review a branch other than the checked-out one, straight
+    // from git. Its working tree does not exist here, so the mode is 'branch'.
+    const currentHead = repoRoot ? await getHead(repoRoot) : null;
+    const wantRef = typeof req.query.branch === 'string' && req.query.branch ? req.query.branch : null;
+    let ref = null;
+    let refError = null;
+    if (repoRoot && wantRef && wantRef !== currentHead) {
+      ref = await resolveRef(repoRoot, wantRef);
+      if (!ref) refError = `Unknown branch: ${wantRef}`;
+    }
+    const pinned = Boolean(ref);
+    // ?diff=all|branch|working (which changes to show); ?base=<ref>. Without
+    // a base, a branch's recorded review base (fleet-review.sh sets one) wins
+    // over the server default.
+    let diffMode = DIFF_MODES.includes(req.query.diff) ? req.query.diff : fallbackDiff;
+    if (pinned) diffMode = 'branch';
+    const viewRef = ref || currentHead;
+    const reviewBase = repoRoot && viewRef ? await getReviewBase(repoRoot, viewRef) : null;
     const requestedBase =
-      (typeof req.query.base === 'string' && req.query.base ? req.query.base : null) || defaultBase;
+      (typeof req.query.base === 'string' && req.query.base ? req.query.base : null) ||
+      reviewBase ||
+      defaultBase;
+    const branches = repoRoot ? await getBranches(repoRoot) : [];
 
     let diff;
     let head;
     let base;
-    let error = null;
+    let error = refError;
 
     if (repoRoot) {
       try {
-        const result = await getDiff(repoRoot, { base: requestedBase, mode: diffMode });
+        const result = await getDiff(repoRoot, { base: requestedBase, mode: diffMode, ref });
         diff = parseDiff(result.patch);
         head = result.head;
         base = result.base;
@@ -104,7 +131,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     await highlightDiff(diff); // attaches per-line highlighted HTML in place
     // Which revision the "new" side comes from, for context expansion:
     // branch mode diffs against HEAD; all/working show the working tree.
-    const rev = repoRoot && diffMode === 'branch' ? 'HEAD' : 'WORKTREE';
+    const rev = repoRoot && diffMode === 'branch' ? ref || 'HEAD' : 'WORKTREE';
     const { filesHtml, summary } = renderDiff(diff, { view, rev });
     const treeHtml = diff.files.length ? renderFileTree(diff) : '';
     res.render('review', {
@@ -112,6 +139,9 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
       isRepo: Boolean(repoRoot),
       base,
       head,
+      currentHead,
+      pinned,
+      branches,
       diffMode,
       colorMode,
       view,
@@ -128,7 +158,12 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
   app.get('/api/context', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const filePath = String(req.query.path || '');
-    const rev = req.query.rev === 'HEAD' ? 'HEAD' : 'WORKTREE';
+    const revParam = String(req.query.rev || 'WORKTREE');
+    let rev = 'WORKTREE';
+    if (revParam !== 'WORKTREE') {
+      rev = revParam === 'HEAD' ? 'HEAD' : await resolveRef(repoRoot, revParam);
+      if (!rev) return res.status(400).json({ error: 'bad rev' });
+    }
     const start = parseInt(req.query.start, 10);
     const end = parseInt(req.query.end, 10);
     if (!filePath || !Number.isFinite(start) || !Number.isFinite(end)) {
@@ -314,7 +349,26 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
 
   // Identifies this server and the repo it serves, so a client scanning ports
   // can find the instance belonging to the repo it cares about.
-  app.get('/healthz', (req, res) => res.json({ ok: true, app: 'prequel', repoRoot }));
+  // Branches this server can review (?branch=), with any recorded review base.
+  app.get('/api/branches', async (req, res) => {
+    if (!repoRoot) return res.json({ branches: [] });
+    const current = await getHead(repoRoot);
+    const names = await getBranches(repoRoot);
+    const branches = [];
+    for (const name of names) {
+      branches.push({ name, current: name === current, reviewBase: await getReviewBase(repoRoot, name) });
+    }
+    res.json({ branches });
+  });
+
+  // gitCommonDir is shared by every worktree of the repository, so a client
+  // in any of them can tell this server is theirs; head is what is checked
+  // out here (the only branch whose working tree this server can show).
+  app.get('/healthz', async (req, res) => {
+    const gitCommonDir = repoRoot ? await getGitCommonDir(repoRoot) : null;
+    const head = repoRoot ? await getHead(repoRoot) : null;
+    res.json({ ok: true, app: 'prequel', repoRoot, gitCommonDir, head });
+  });
 
   return app;
 }

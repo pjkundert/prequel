@@ -1123,3 +1123,8 @@ body {
 .comment-thread.is-resolved:hover {
   opacity: 1;
 }
+
+/* ?branch= reviews: the picker sits where the head pill was; modes that need
+   a working tree are disabled when the reviewed branch is not checked out. */
+.branch-picker { font: inherit; cursor: pointer; max-width: 28em; }
+.seg-btn.is-disabled { opacity: 0.4; cursor: not-allowed; pointer-events: auto; }
