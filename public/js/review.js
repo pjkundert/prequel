@@ -78,7 +78,7 @@ async function expandContext(btn) {
   row.dataset.loading = '1';
   try {
     const res = await fetch(
-      `/api/context?path=${encodeURIComponent(path)}&rev=${rev}` +
+      `api/context?path=${encodeURIComponent(path)}&rev=${rev}` +
         `&start=${gapStartNew}&end=${gapEndNew}`
     );
     const data = await res.json();

@@ -60,22 +60,25 @@ const projectRoot = path.resolve(__dirname, '..');
 
 const DIFF_MODES = ['all', 'branch', 'working'];
 
-export function createServer({ repoRoot = null, defaultBase = null, defaultDiff = null } = {}) {
+export function createServer({ repoRoot = null, defaultBase = null, defaultDiff = null, basePath = '' } = {}) {
   // The mode a bare '/' renders; ?diff= on the URL always wins.
   const fallbackDiff = DIFF_MODES.includes(defaultDiff) ? defaultDiff : 'working';
   const app = express();
+  // Every page and API route lives under basePath ('' at the root), so the app
+  // can sit behind a reverse proxy at https://host/diffs/ unchanged.
+  const router = express.Router();
 
   app.set('view engine', 'ejs');
   app.set('views', path.join(projectRoot, 'views'));
 
   app.use(express.json({ limit: '1mb' }));
-  app.use('/static', express.static(path.join(projectRoot, 'public')));
-  app.use(
+  router.use('/static', express.static(path.join(projectRoot, 'public')));
+  router.use(
     '/vendor/primer',
     express.static(path.join(projectRoot, 'node_modules/@primer/primitives/dist/css'))
   );
 
-  app.get('/', async (req, res) => {
+  router.get('/', async (req, res) => {
     // ?view=split|unified (layout); ?mode=light|dark (color); default auto.
     const view = req.query.view === 'unified' ? 'unified' : 'split';
     const colorMode = ['light', 'dark'].includes(req.query.mode) ? req.query.mode : 'auto';
@@ -150,12 +153,13 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
       treeHtml,
       summary,
       commentsEnabled: Boolean(repoRoot),
+      basePath,
     });
   });
 
   // On-demand context lines for hunk expansion.
   // ?path=&rev=HEAD|WORKTREE&start=&end= (new-side line numbers, 1-based).
-  app.get('/api/context', async (req, res) => {
+  router.get('/api/context', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const filePath = String(req.query.path || '');
     const revParam = String(req.query.rev || 'WORKTREE');
@@ -196,7 +200,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     }
   }
 
-  app.get('/api/events', (req, res) => {
+  router.get('/api/events', (req, res) => {
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-transform',
@@ -220,7 +224,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
   });
 
   // --- review comments ---------------------------------------------------
-  app.get('/api/comments', async (req, res) => {
+  router.get('/api/comments', async (req, res) => {
     if (!repoRoot) return res.json({ comments: [] });
     const branch = req.query.branch ? String(req.query.branch) : null;
     // Optional filters; omit them all to get everything (what the UI wants).
@@ -236,7 +240,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     res.json({ comments: comments.map(withHtml) });
   });
 
-  app.post('/api/comments', async (req, res) => {
+  router.post('/api/comments', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const b = req.body || {};
     const author = b.author === 'claude' ? 'claude' : 'user';
@@ -284,7 +288,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     res.json({ comment: withHtml(comment) });
   });
 
-  app.patch('/api/comments/:id', async (req, res) => {
+  router.patch('/api/comments/:id', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const b = req.body || {};
     const patch = {};
@@ -296,7 +300,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     res.json({ comment: withHtml(comment) });
   });
 
-  app.delete('/api/comments/:id', async (req, res) => {
+  router.delete('/api/comments/:id', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const removed = await deleteComment(repoRoot, req.params.id);
     if (removed) emit('comment.deleted', { id: req.params.id }, req);
@@ -304,7 +308,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
   });
 
   // Bulk clear (with undo) for a clean slate between review rounds.
-  app.post('/api/comments/clear', async (req, res) => {
+  router.post('/api/comments/clear', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const branch = req.body?.branch ? String(req.body.branch) : null;
     const cleared = await clearComments(repoRoot, branch);
@@ -312,7 +316,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     res.json({ cleared });
   });
 
-  app.post('/api/comments/restore', async (req, res) => {
+  router.post('/api/comments/restore', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const restored = await restoreCleared(repoRoot);
     emit('comments.reset', {}, req);
@@ -321,7 +325,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
 
   // Build the Claude payload, write it to <repo>/.prequel/, and return it so the
   // client can also copy it to the clipboard.
-  app.post('/api/export', async (req, res) => {
+  router.post('/api/export', async (req, res) => {
     if (!repoRoot) return res.status(400).json({ error: 'no repo' });
     const branch = req.body?.branch ? String(req.body.branch) : null;
     const format = req.body?.format === 'json' ? 'json' : 'md';
@@ -350,7 +354,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
   // Identifies this server and the repo it serves, so a client scanning ports
   // can find the instance belonging to the repo it cares about.
   // Branches this server can review (?branch=), with any recorded review base.
-  app.get('/api/branches', async (req, res) => {
+  router.get('/api/branches', async (req, res) => {
     if (!repoRoot) return res.json({ branches: [] });
     const current = await getHead(repoRoot);
     const names = await getBranches(repoRoot);
@@ -364,11 +368,15 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
   // gitCommonDir is shared by every worktree of the repository, so a client
   // in any of them can tell this server is theirs; head is what is checked
   // out here (the only branch whose working tree this server can show).
-  app.get('/healthz', async (req, res) => {
+  const healthz = async (req, res) => {
     const gitCommonDir = repoRoot ? await getGitCommonDir(repoRoot) : null;
     const head = repoRoot ? await getHead(repoRoot) : null;
-    res.json({ ok: true, app: 'prequel', repoRoot, gitCommonDir, head });
-  });
+    res.json({ ok: true, app: 'prequel', repoRoot, gitCommonDir, head, basePath });
+  };
+  router.get('/healthz', healthz);
+  app.get('/healthz', healthz);
+  app.use(basePath || '/', router);
+  if (basePath) app.get('/', (req, res) => res.redirect(basePath + '/'));
 
   return app;
 }

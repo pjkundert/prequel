@@ -15,12 +15,13 @@ const VERSION = JSON.parse(
 
 // --- tiny arg parser (avoid a dependency for Phase 0) --------------------
 function parseArgs(argv) {
-  const opts = { repoPath: process.cwd(), base: null, port: null, open: true, diff: null };
+  const opts = { repoPath: process.cwd(), base: null, port: null, open: true, diff: null, basePath: '' };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--base') opts.base = argv[++i];
     else if (a === '--diff') opts.diff = argv[++i];
+    else if (a === '--base-path') opts.basePath = argv[++i];
     else if (a === '--port') opts.port = Number(argv[++i]);
     else if (a === '--no-open') opts.open = false;
     else if (a === '--project') opts.project = true;
@@ -36,13 +37,15 @@ function parseArgs(argv) {
 const HELP = `prequel — local GitHub-style PR diff reviewer
 
 Usage:
-  prequel [repoPath] [--base <ref>] [--diff all|branch|working] [--port <n>] [--no-open]
+  prequel [repoPath] [--base <ref>] [--diff all|branch|working] [--base-path /p] [--port <n>] [--no-open]
   prequel install <agent> [--project] [--force]
 
   repoPath   Path to the git repo (default: current directory)
   --base     Base ref to diff against (default: main/master)
   --diff     Which changes to show when the page is opened without ?diff=
              (all | branch | working; default: working)
+  --base-path  URL prefix the app is served under, e.g. /diffs when a
+             reverse proxy mounts it at https://host/diffs/ (default: /)
   --port     Port to listen on (default: first free from 4711)
   --no-open  Don't auto-open the browser
   --version  Print the installed version and exit
@@ -110,11 +113,12 @@ async function main() {
   // A non-repo is tolerated: the server falls back to the built-in sample diff.
   const effectiveRepo = repoRoot || opts.repoPath;
 
-  const app = createServer({ repoRoot, defaultBase: opts.base, defaultDiff: opts.diff });
+  const basePath = ('/' + (opts.basePath || '')).replace(/\/+/g, '/').replace(/\/$/, '');
+  const app = createServer({ repoRoot, defaultBase: opts.base, defaultDiff: opts.diff, basePath });
   const port = opts.port || (await findFreePort(4711));
 
   app.listen(port, '127.0.0.1', async () => {
-    const url = `http://127.0.0.1:${port}`;
+    const url = `http://127.0.0.1:${port}${basePath}/`;
     process.stdout.write(`\n  prequel running at ${url}\n`);
     process.stdout.write(`  repo: ${effectiveRepo}${repoRoot ? '' : '  (not a git repo — showing sample diff)'}\n`);
     process.stdout.write('  Ctrl-C to stop\n');
