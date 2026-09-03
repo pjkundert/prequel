@@ -1,6 +1,10 @@
-# prequel
+<p align="center">
+  <img src="public/icon.svg" width="96" height="96" alt="">
+</p>
 
-*Review it before it's a pull request.*
+<h1 align="center">prequel</h1>
+
+<p align="center"><em>Review it before it's a pull request.</em></p>
 
 A local web app that renders a Git repo's diff using a UI that looks like
 GitHub's Pull Request **Files changed** tab. Supports system light/dark mode.
