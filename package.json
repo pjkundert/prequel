@@ -1,6 +1,6 @@
 {
   "name": "@mdesjardins/prequel",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Review it before it's a pull request — a local, GitHub-style diff reviewer",
   "type": "module",
   "license": "GPL-3.0-or-later",
