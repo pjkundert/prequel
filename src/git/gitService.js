@@ -169,7 +169,10 @@ export async function getBlobLines(repoRoot, { rev, path: filePath, start, end }
     if (!abs.startsWith(path.resolve(repoRoot) + path.sep)) return { lines: [], eof: true };
     content = await fs.readFile(abs, 'utf8').catch(() => '');
   } else {
-    content = await git(repoRoot, ['show', `${rev}:${filePath}`]).catch(() => '');
+    // --textconv: the same conversion 'git diff' applied to the hunks (a
+    // textconv driver from .gitattributes, when there is one), so expanded
+    // context lines up with them; without a driver it is the plain blob.
+    content = await git(repoRoot, ['cat-file', '--textconv', `${rev}:${filePath}`]).catch(() => '');
   }
   const all = content.split('\n');
   if (all.length && all[all.length - 1] === '') all.pop(); // drop trailing newline artifact
