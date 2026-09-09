@@ -137,6 +137,11 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     const rev = repoRoot && diffMode === 'branch' ? ref || 'HEAD' : 'WORKTREE';
     const { filesHtml, summary } = renderDiff(diff, { view, rev });
     const treeHtml = diff.files.length ? renderFileTree(diff) : '';
+    // <base href> carries this request's query string, so a fragment link
+    // ('#diff-<id>' in the file tree) resolves to this very page and scrolls,
+    // instead of navigating to basePath/ without ?branch=... .
+    const qIdx = req.originalUrl.indexOf('?');
+    const baseHref = `${basePath}/${qIdx >= 0 ? req.originalUrl.slice(qIdx) : ''}`;
     res.render('review', {
       repoPath: repoRoot || process.cwd(),
       isRepo: Boolean(repoRoot),
@@ -154,6 +159,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
       summary,
       commentsEnabled: Boolean(repoRoot),
       basePath,
+      baseHref,
     });
   });
 
