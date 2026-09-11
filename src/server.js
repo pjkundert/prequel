@@ -60,7 +60,7 @@ const projectRoot = path.resolve(__dirname, '..');
 
 const DIFF_MODES = ['all', 'branch', 'working'];
 
-export function createServer({ repoRoot = null, defaultBase = null, defaultDiff = null, basePath = '' } = {}) {
+export function createServer({ repoRoot = null, defaultBase = null, defaultDiff = null, basePath = '', staticDir = null } = {}) {
   // The mode a bare '/' renders; ?diff= on the URL always wins.
   const fallbackDiff = DIFF_MODES.includes(defaultDiff) ? defaultDiff : 'working';
   const app = express();
@@ -382,7 +382,13 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
   router.get('/healthz', healthz);
   app.get('/healthz', healthz);
   app.use(basePath || '/', router);
-  if (basePath) app.get('/', (req, res) => res.redirect(basePath + '/'));
+  if (staticDir) {
+    // --static: a site at the root beside the app (under basePath), so one
+    // process serves both and the site's relative links to the app resolve.
+    app.use('/', express.static(path.resolve(staticDir)));
+  } else if (basePath) {
+    app.get('/', (req, res) => res.redirect(basePath + '/'));
+  }
 
   return app;
 }
