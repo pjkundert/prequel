@@ -89,7 +89,13 @@ export async function getReviewBase(repoRoot, ref) {
   const out = await git(repoRoot, ['config', '--get', `branch.${ref}.reviewbase`], {
     okCodes: [0, 1],
   }).catch(() => '');
-  return out.trim() || null;
+  if (out.trim()) return out.trim();
+  // Config does not travel with a push; a tag <ref>-baseline on the same
+  // commit does, so another clone finds the review base too.
+  const tag = await git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/tags/${ref}-baseline`], {
+    okCodes: [0, 1],
+  }).catch(() => '');
+  return tag.trim() ? `${ref}-baseline` : null;
 }
 
 // The repository's common git dir (shared by all its worktrees), absolute:
