@@ -54,6 +54,8 @@ repo instead, if you'd rather commit it and share it with a team. The command re
 Once the skill is installed, from a Claude Code session in the repo you're reviewing you can run `/prequel`. Claude finds the server by scanning ports 4711-4720
 and matching the repo root reported by `/healthz`, works the comments one at a time.
 
-The page updates live over an event stream, so comments resolve and Claude's replies appear as it works — no reload. Append `?live=0` to the URL to opt out (although there's currently a bug that prevents the code itself from being updated 😬) 
+The page updates live over an event stream, so comments resolve and Claude's replies appear as it works — no reload. The diff itself is rendered server-side, so when the code changes on disk the page reloads to pick it up; if you're partway through writing a comment it offers a Reload button instead of discarding your draft. Append `?live=0` to the URL to opt out of both.
+
+A comment whose line no longer exists after a change isn't lost — it moves to the top of its file marked **Outdated**, noting the line it used to point at.
 
 Claude can reply in a thread as well as resolve it, which is where it explains a decision or says why it *didn't* make a change.

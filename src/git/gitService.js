@@ -120,6 +120,35 @@ export async function getDiff(repoRoot, { base, mode = 'all' } = {}) {
 // all/working modes, including uncommitted edits); otherwise `git show rev:path`.
 // start/end are 1-based inclusive. `eof` is true when `end` reached past the
 // last line, so the caller can stop offering further downward expansion.
+// A cheap signal for "the diff would render differently now". Combines the
+// commit sha (catches commits and checkouts) with the porcelain status and the
+// size+mtime of every changed file (catches edits to an already-dirty file,
+// which the status output alone would not show). Deliberately not a diff:
+// this runs on a timer, and `git diff` on a large repo is not free.
+export async function repoFingerprint(repoRoot) {
+  const [sha, status] = await Promise.all([
+    git(repoRoot, ['rev-parse', 'HEAD']).catch(() => ''),
+    git(repoRoot, ['status', '--porcelain', '--untracked-files=all']).catch(() => ''),
+  ]);
+  const paths = status
+    .split('\n')
+    .filter(Boolean)
+    // porcelain v1: 2 status chars, a space, then the path (or "old -> new")
+    .map((line) => line.slice(3).split(' -> ').pop().trim())
+    .filter(Boolean);
+  const stats = await Promise.all(
+    paths.map(async (rel) => {
+      try {
+        const st = await fs.stat(path.join(repoRoot, rel));
+        return `${rel}:${st.size}:${st.mtimeMs}`;
+      } catch {
+        return `${rel}:gone`; // deleted between status and stat
+      }
+    })
+  );
+  return `${sha.trim()}|${status}|${stats.join(',')}`;
+}
+
 export async function getBlobLines(repoRoot, { rev, path: filePath, start, end }) {
   let content;
   if (rev === 'WORKTREE') {

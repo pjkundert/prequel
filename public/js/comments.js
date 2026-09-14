@@ -36,7 +36,7 @@
 
   // --- toast (with optional action) --------------------------------------
   let toastTimer = null;
-  function toast(message, action) {
+  function toast(message, action, { sticky = false } = {}) {
     const el = document.getElementById('toast');
     if (!el) return;
     el.textContent = '';
@@ -55,7 +55,7 @@
     }
     el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (el.hidden = true), 6000);
+    if (!sticky) toastTimer = setTimeout(() => (el.hidden = true), 6000);
   }
 
   // --- shared thread markup ---------------------------------------------
@@ -69,13 +69,17 @@
     }
   }
 
-  function commentCardHtml(c, { isRoot }) {
+  function commentCardHtml(c, { isRoot, outdated = false }) {
     const author = c.author === 'claude' ? 'claude' : 'you';
     const range =
       isRoot && c.side !== 'file' && c.endLine > c.startLine
         ? `<span class="comment-lines">Lines ${c.startLine}–${c.endLine}</span>`
         : '';
     const resolved = isRoot && c.status === 'resolved';
+    const outdatedPill =
+      isRoot && outdated
+        ? `<span class="comment-outdated-pill">Outdated${c.side === 'file' ? '' : ` · was line ${c.startLine}`}</span>`
+        : '';
     const tools = isRoot
       ? `<button class="comment-resolve">${resolved ? 'Reopen' : 'Resolve'}</button>` +
         `<button class="comment-reply-btn">Reply</button>`
@@ -86,6 +90,7 @@
       `<span class="comment-author comment-author-${author}">${author === 'claude' ? 'Claude' : 'You'}</span>` +
       range +
       `<span class="comment-time">${escapeHtml(timeLabel(c))}</span>` +
+      outdatedPill +
       (resolved ? '<span class="comment-resolved-pill">Resolved</span>' : '') +
       `<span class="comment-tools">${tools}` +
       `<button class="comment-delete" title="Delete comment">Delete</button></span>` +
@@ -95,11 +100,12 @@
     );
   }
 
-  function threadInner(root, replies) {
-    const cards = [commentCardHtml(root, { isRoot: true })].concat(
+  function threadInner(root, replies, { outdated = false } = {}) {
+    const cards = [commentCardHtml(root, { isRoot: true, outdated })].concat(
       (replies || []).map((r) => commentCardHtml(r, { isRoot: false }))
     );
-    const cls = root.status === 'resolved' ? ' is-resolved' : '';
+    const cls =
+      (root.status === 'resolved' ? ' is-resolved' : '') + (outdated ? ' is-outdated' : '');
     return `<div class="comment-thread${cls}" data-root-id="${root.id}">${cards.join('')}</div>`;
   }
 
@@ -125,8 +131,8 @@
 
   const commentRowHtml = (c, isSplit, replies) =>
     `<tr class="comment-row" data-root-id="${c.id}">${threadCells(isSplit, c.side, threadInner(c, replies))}</tr>`;
-  const fileCommentHtml = (c, replies) =>
-    `<div class="file-comment" data-root-id="${c.id}">${threadInner(c, replies)}</div>`;
+  const fileCommentHtml = (c, replies, opts) =>
+    `<div class="file-comment" data-root-id="${c.id}">${threadInner(c, replies, opts)}</div>`;
 
   // --- anchoring helpers -------------------------------------------------
   function findAnchorCell(filePath, side, line) {
@@ -356,19 +362,31 @@
   }
 
   // --- load, export, clear ----------------------------------------------
+  // Returns false when the comment has nowhere to attach — its line is no
+  // longer in the diff (the code moved or the fix landed), or the whole file is
+  // gone from it. Callers decide what to do with the leftovers.
   function renderComment(c, replies) {
+    const file = document.querySelector(`.file[data-path="${CSS.escape(c.filePath)}"]`);
     if (c.side === 'file') {
-      const file = document.querySelector(`.file[data-path="${CSS.escape(c.filePath)}"]`);
-      if (file)
-        file.querySelector('.file-comments').insertAdjacentHTML('beforeend', fileCommentHtml(c, replies));
-      return;
+      if (!file) return false;
+      file.querySelector('.file-comments').insertAdjacentHTML('beforeend', fileCommentHtml(c, replies));
+      return true;
     }
     // ranges anchor after the end line (GitHub's convention)
     const cell = findAnchorCell(c.filePath, c.side, c.endLine || c.startLine);
-    if (!cell) return; // line not present in the current view/mode
+    if (!cell) {
+      // The line is gone, but if the file is still on screen we can keep the
+      // thread visible at file level rather than have it silently vanish.
+      if (!file) return false;
+      file
+        .querySelector('.file-comments')
+        .insertAdjacentHTML('beforeend', fileCommentHtml(c, replies, { outdated: true }));
+      return true;
+    }
     const row = cell.closest('tr');
     const isSplit = isSplitTable(cell.closest('table'));
     insertionPointAfter(row).insertAdjacentHTML('afterend', commentRowHtml(c, isSplit, replies));
+    return true;
   }
 
   // Replies arrive as flat records; bucket them under the root they answer.
@@ -397,7 +415,19 @@
     const threads = groupThreads(comments);
     commentCount = threads.length; // the button counts asks, not messages
     updateButtons();
-    threads.forEach(({ root, replies }) => renderComment(root, replies));
+    let offscreen = 0;
+    threads.forEach(({ root, replies }) => {
+      if (!renderComment(root, replies)) offscreen++;
+    });
+    // Comments on files that are no longer in this diff still exist, they just
+    // have nowhere to render — say so rather than appear to have lost them.
+    if (offscreen) {
+      toast(
+        `${offscreen} comment${offscreen === 1 ? '' : 's'} not shown — ${
+          offscreen === 1 ? 'its file is' : 'their files are'
+        } no longer in this diff`
+      );
+    }
   }
 
   async function runExport() {
@@ -626,7 +656,31 @@
         removeAllCommentEls();
         loadComments();
         return;
+      case 'diff.changed':
+        scheduleRefresh();
+        return;
     }
+  }
+
+  // The diff is rendered server-side, so picking up code changes means
+  // reloading. Debounced, because a run of edits arrives as a burst.
+  let refreshTimer = null;
+  let refreshing = false;
+  function composeInProgress() {
+    return [...document.querySelectorAll('.comment-input')].some((el) => el.value.trim() !== '');
+  }
+  function scheduleRefresh() {
+    if (refreshing) return;
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      // Never blow away a comment being typed — offer the reload instead.
+      if (composeInProgress()) {
+        toast('The code changed on disk.', { label: 'Reload', fn: () => location.reload() }, { sticky: true });
+        return;
+      }
+      refreshing = true;
+      location.reload();
+    }, 700);
   }
 
   function connectEvents() {

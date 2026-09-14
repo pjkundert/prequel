@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import { renderDiff, renderFileTree } from './render/renderer.js';
 import { highlightDiff, highlightLines } from './render/highlighter.js';
 import { annotateWordDiffs } from './render/wordDiff.js';
-import { getDiff, getBlobLines } from './git/gitService.js';
+import { getDiff, getBlobLines, repoFingerprint } from './git/gitService.js';
 import { parseDiff, inferLanguage } from './git/diffParser.js';
 import { sampleDiff } from './sampleDiff.js';
 import {
@@ -159,6 +159,38 @@ export function createServer({ repoRoot = null, defaultBase = null } = {}) {
     }
   }
 
+  // Comments stream live, but the diff itself is rendered server-side at page
+  // load — so code edited after that (by Claude working the review, or by the
+  // user in an editor) goes stale on screen. Poll for repo changes while a page
+  // is watching, and tell it so it can refresh.
+  let lastFingerprint = null;
+  let watchTimer = null;
+
+  async function pollRepo() {
+    if (!repoRoot) return;
+    try {
+      const fp = await repoFingerprint(repoRoot);
+      if (lastFingerprint !== null && fp !== lastFingerprint) emit('diff.changed', {});
+      lastFingerprint = fp;
+    } catch {
+      /* transient git failure (e.g. mid-rebase index.lock) — try again next tick */
+    }
+  }
+
+  // Only poll while someone is watching, so an idle server does no git work.
+  function syncWatcher() {
+    const shouldWatch = repoRoot && sseClients.size > 0;
+    if (shouldWatch && !watchTimer) {
+      lastFingerprint = null; // re-baseline; don't fire for changes made while nobody watched
+      pollRepo();
+      watchTimer = setInterval(pollRepo, 1500);
+      watchTimer.unref?.(); // never hold the process open
+    } else if (!shouldWatch && watchTimer) {
+      clearInterval(watchTimer);
+      watchTimer = null;
+    }
+  }
+
   app.get('/api/events', (req, res) => {
     res.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -168,6 +200,7 @@ export function createServer({ repoRoot = null, defaultBase = null } = {}) {
     });
     res.write('retry: 2000\n\n');
     sseClients.add(res);
+    syncWatcher();
     // Comment-only frames keep the connection from idling out.
     const ping = setInterval(() => {
       try {
@@ -179,6 +212,7 @@ export function createServer({ repoRoot = null, defaultBase = null } = {}) {
     req.on('close', () => {
       clearInterval(ping);
       sseClients.delete(res);
+      syncWatcher();
     });
   });
 

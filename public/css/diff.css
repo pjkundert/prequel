@@ -1123,3 +1123,14 @@ body {
 .comment-thread.is-resolved:hover {
   opacity: 1;
 }
+
+/* A thread whose line is no longer in the diff: kept visible at file level. */
+.comment-outdated-pill {
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--fgColor-onEmphasis, #fff);
+  background-color: var(--bgColor-attention-emphasis, #9a6700);
+}
