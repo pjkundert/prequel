@@ -14,7 +14,7 @@
   <base href="<%= baseHref %>" />
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PR Review — <%= head %></title>
+  <title><% if (locals.compare) { %>Compare — <%= compare.b ? compare.b.path.split('/').slice(-2).join('/') : head %><% } else { %>PR Review — <%= head %><% } %></title>
   <link rel="icon" type="image/svg+xml" href="static/icon.svg" />
   <!-- GitHub's exact design tokens; both files loaded so auto mode follows the OS -->
   <link rel="stylesheet" href="vendor/primer/functional/themes/light.css" />
@@ -30,7 +30,17 @@
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25H5V1.5Zm4.75 0v13h7.75a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25Z"></path></svg>
         </button>
         <% } %>
-        <h1 class="pr-title">Files changed</h1>
+        <h1 class="pr-title"><%= locals.compare ? 'Compare' : 'Files changed' %></h1>
+        <% if (locals.compare) { %>
+        <span class="pr-refs">
+          <% if (compare.a) { %>
+          <span class="ref-pill" title="<%= compare.a.spec %>"><%= compare.la || compare.a.rev %></span>
+          <span class="ref-arrow">against</span>
+          <% } %>
+          <span class="ref-pill" title="<%= compare.b ? compare.b.spec : head %>"><%= compare.lb || (compare.b ? compare.b.rev : head) %></span>
+          <% if (!compare.a) { %><span class="ref-arrow">whole, as new</span><% } %>
+        </span>
+        <% } else { %>
         <span class="pr-refs">
           <% if (isRepo && branches.length) { %>
           <select id="branch-picker" class="ref-pill branch-picker" title="Branch to review (any local branch; only the checked-out one has a working tree)">
@@ -44,6 +54,7 @@
           <span class="ref-arrow">into</span>
           <span class="ref-pill"><%= base %></span>
         </span>
+        <% } %>
       </div>
       <div class="pr-meta-row">
         <span class="diff-summary">
@@ -57,7 +68,7 @@
           <button id="export-btn" class="export-btn" hidden>Export for Claude</button>
           <button id="clear-btn" class="clear-btn" hidden>Clear</button>
           <% } %>
-          <% if (isRepo) { %>
+          <% if (isRepo && !locals.compare) { %>
           <span class="seg-toggle" role="group" aria-label="Changes to show">
             <a class="seg-btn<%= diffMode === 'all' ? ' is-active' : '' %><%= pinned ? ' is-disabled' : '' %>"
                href="?diff=all" data-param="diff" data-value="all" title="<%= pinned ? 'Only for the checked-out branch (' + currentHead + ')' : 'Branch commits + uncommitted + untracked' %>">All</a>
@@ -90,6 +101,8 @@
     <main class="diff-container">
       <% if (error) { %>
         <div class="notice notice-error">Could not read git diff: <%= error %></div>
+      <% } else if (locals.compare) { %>
+        <div class="notice notice-info"><%= compare.identical ? 'The two files are identical.' : 'Two files compared, read-only: comments belong to a review branch.' %></div>
       <% } else if (!isRepo) { %>
         <div class="notice notice-info">Not a git repository — showing a built-in sample diff. Launch <code>prequel</code> from inside a repo to review real changes.</div>
       <% } %>

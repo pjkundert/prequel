@@ -23,6 +23,7 @@ function goToParam(param, value) {
     if (params.has(param)) continue; // explicit choice in URL wins
     const saved = localStorage.getItem('prequel:' + param);
     const rendered = document.documentElement.getAttribute('data-' + param);
+    if (rendered === 'compare') continue; // two files compared: no changes-to-show mode applies
     if (saved && saved !== rendered) {
       params.set(param, saved);
       changed = true;

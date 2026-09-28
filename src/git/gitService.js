@@ -162,6 +162,49 @@ export async function getDiff(repoRoot, { base, mode = 'all', ref = null } = {})
   return { patch, head, base: baseRef, mode };
 }
 
+// Two files compared as one: ?a=<rev>:<path>&b=<rev>:<path>.  The same path at
+// two revisions, or two paths -- one project's copy of a file against another's
+// -- which no pair of commits relates, since git diffs a path only against
+// itself.  git diffs two blobs directly; the header is then rewritten into the
+// form the parser already knows, so the rest of the page is a branch review's.
+
+// The empty blob: every git knows it without storing it.  b against it is b
+// whole, as a new file.
+export const EMPTY_BLOB = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
+
+// A user-supplied '<rev>:<path>', validated as resolveRef does a ref: it names
+// a file (a blob) in a commit and cannot look like an option.  Returns
+// { spec, rev, path }, or null.
+export async function resolveBlobSpec(repoRoot, spec) {
+  if (!spec || typeof spec !== 'string' || spec.startsWith('-')) return null;
+  const at = spec.indexOf(':');
+  if (at <= 0 || at === spec.length - 1) return null;
+  const rev = spec.slice(0, at);
+  if (!(await resolveRef(repoRoot, rev))) return null;
+  const type = (await git(repoRoot, ['cat-file', '-t', spec]).catch(() => '')).trim();
+  return type === 'blob' ? { spec, rev, path: spec.slice(at + 1) } : null;
+}
+
+// A path as git writes it on a ---/+++ line: with a trailing tab when it holds a space.
+const sideLine = (prefix, p) => `${prefix}${p}${p.includes(' ') ? '\t' : ''}`;
+
+// The patch comparing b with a (a resolveBlobSpec each; a null: b alone, whole).
+// Two paths read as a rename, so the file header shows 'a-path -> b-path'; b
+// alone reads as a new file.  Hunks are git's own, textconv applied (the
+// attributes follow each spec's path).  `identical` when git finds no change.
+export async function getBlobPairDiff(repoRoot, { a, b }) {
+  const out = await git(repoRoot, ['diff', '--no-color', a ? a.spec : EMPTY_BLOB, b.spec]);
+  if (!out.trim()) return { patch: '', identical: true };
+  const at = out.search(/^@@/m);
+  if (at < 0) return { patch: out, identical: false }; // binary: git's own header says so
+  const header = a
+    ? [`diff --git a/${a.path} b/${b.path}`,
+       ...(a.path !== b.path ? [`rename from ${a.path}`, `rename to ${b.path}`] : []),
+       sideLine('--- a/', a.path), sideLine('+++ b/', b.path)]
+    : [`diff --git a/${b.path} b/${b.path}`, 'new file mode 100644', '--- /dev/null', sideLine('+++ b/', b.path)];
+  return { patch: header.join('\n') + '\n' + out.slice(at), identical: false };
+}
+
 // Fetch a contiguous range of lines from a file for hunk-context expansion.
 // rev === 'WORKTREE' reads the on-disk file (matches what's shown for
 // all/working modes, including uncommitted edits); otherwise `git show rev:path`.

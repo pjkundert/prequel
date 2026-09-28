@@ -14,6 +14,8 @@ import {
   getGitCommonDir,
   resolveRef,
   repoFingerprint,
+  resolveBlobSpec,
+  getBlobPairDiff,
 } from './git/gitService.js';
 import { parseDiff, inferLanguage } from './git/diffParser.js';
 import { sampleDiff } from './sampleDiff.js';
@@ -79,10 +81,72 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     express.static(path.join(projectRoot, 'node_modules/@primer/primitives/dist/css'))
   );
 
+  // <base href> carries this request's query string, so a fragment link
+  // ('#diff-<id>' in the file tree) resolves to this very page and scrolls,
+  // instead of navigating to basePath/ without ?branch=... .
+  const baseHrefOf = (req) => {
+    const qIdx = req.originalUrl.indexOf('?');
+    return `${basePath}/${qIdx >= 0 ? req.originalUrl.slice(qIdx) : ''}`;
+  };
+
+  // ?a=<rev>:<path>&b=<rev>:<path> (&la=&lb= labels): two files compared as
+  // one, read-only -- comments belong to a branch, and this page has none.  b
+  // alone (or a alone) shows that file whole, as new.  The page is a branch
+  // review's: the same parse, highlighting and rendering, and context
+  // expansion reads b's side from b's commit.
+  async function renderCompare(req, res, { view, colorMode }) {
+    const label = (v) => (typeof v === 'string' && v ? v.slice(0, 120) : null);
+    let wantA = typeof req.query.a === 'string' && req.query.a ? req.query.a : null;
+    let wantB = typeof req.query.b === 'string' && req.query.b ? req.query.b : null;
+    let la = label(req.query.la);
+    let lb = label(req.query.lb);
+    if (!wantB) [wantA, wantB, la, lb] = [null, wantA, null, la];
+    const a = wantA ? await resolveBlobSpec(repoRoot, wantA) : null;
+    const b = await resolveBlobSpec(repoRoot, wantB);
+    let error = null;
+    if (!b) error = `Not a file in a commit: ${wantB}`;
+    else if (wantA && !a) error = `Not a file in a commit: ${wantA}`;
+    let diff = { files: [] };
+    let identical = false;
+    if (!error) {
+      try {
+        const result = await getBlobPairDiff(repoRoot, { a, b });
+        diff = parseDiff(result.patch);
+        identical = result.identical;
+      } catch (err) {
+        error = err.message;
+      }
+    }
+    annotateWordDiffs(diff);
+    await highlightDiff(diff);
+    const { filesHtml, summary } = renderDiff(diff, { view, rev: b ? b.rev : null });
+    res.render('review', {
+      repoPath: repoRoot,
+      isRepo: true,
+      base: a ? a.spec : '(nothing)',
+      head: b ? b.spec : wantB,
+      currentHead: await getHead(repoRoot),
+      pinned: true,
+      branches: [],
+      diffMode: 'compare',
+      colorMode,
+      view,
+      error,
+      filesHtml,
+      treeHtml: '',
+      summary,
+      commentsEnabled: false,
+      basePath,
+      baseHref: baseHrefOf(req),
+      compare: { a, b, la, lb, identical },
+    });
+  }
+
   router.get('/', async (req, res) => {
     // ?view=split|unified (layout); ?mode=light|dark (color); default auto.
     const view = req.query.view === 'unified' ? 'unified' : 'split';
     const colorMode = ['light', 'dark'].includes(req.query.mode) ? req.query.mode : 'auto';
+    if (repoRoot && (req.query.a || req.query.b)) return renderCompare(req, res, { view, colorMode });
     // ?branch=<ref>: review a branch other than the checked-out one, straight
     // from git. Its working tree does not exist here, so the mode is 'branch'.
     const currentHead = repoRoot ? await getHead(repoRoot) : null;
@@ -138,11 +202,7 @@ export function createServer({ repoRoot = null, defaultBase = null, defaultDiff 
     const rev = repoRoot && diffMode === 'branch' ? ref || 'HEAD' : 'WORKTREE';
     const { filesHtml, summary } = renderDiff(diff, { view, rev });
     const treeHtml = diff.files.length ? renderFileTree(diff) : '';
-    // <base href> carries this request's query string, so a fragment link
-    // ('#diff-<id>' in the file tree) resolves to this very page and scrolls,
-    // instead of navigating to basePath/ without ?branch=... .
-    const qIdx = req.originalUrl.indexOf('?');
-    const baseHref = `${basePath}/${qIdx >= 0 ? req.originalUrl.slice(qIdx) : ''}`;
+    const baseHref = baseHrefOf(req);
     res.render('review', {
       repoPath: repoRoot || process.cwd(),
       isRepo: Boolean(repoRoot),
