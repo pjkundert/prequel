@@ -63,6 +63,19 @@ const projectRoot = path.resolve(__dirname, '..');
 
 const DIFF_MODES = ['all', 'branch', 'working'];
 
+/**
+ * The prequel app: the review page and its JSON API over one repository
+ * (docs/http-api.md).  The CLI builds one per run; the package does not yet
+ * offer it as a library API.
+ *
+ * @param {object} [options]
+ * @param {string|null} [options.repoRoot] The repository's top level; null serves the built-in sample diff.
+ * @param {string|null} [options.defaultBase] The base ref when neither ?base= nor a branch's review base names one (--base).
+ * @param {'all'|'branch'|'working'|null} [options.defaultDiff] The mode a page opened without ?diff= shows (--diff); 'working' when unset.
+ * @param {string} [options.basePath] '' or '/prefix': every route mounts under it, and /healthz at the root too (--base-path).
+ * @param {string|null} [options.staticDir] A directory served at '/' beside the app; needs basePath (--static).
+ * @returns {import('express').Express} The app, to listen() on.
+ */
 export function createServer({ repoRoot = null, defaultBase = null, defaultDiff = null, basePath = '', staticDir = null } = {}) {
   // The mode a bare '/' renders; ?diff= on the URL always wins.
   const fallbackDiff = DIFF_MODES.includes(defaultDiff) ? defaultDiff : 'working';
