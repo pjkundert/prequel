@@ -93,7 +93,12 @@ async function expandContext(btn) {
       const inner = data.html ? data.html[i] : escapeHtml(content);
       frag += contextRow(split, n + offset, n, inner);
     });
-    if (frag) row.insertAdjacentHTML('beforebegin', frag);
+    // Above the chunks this expander loaded before, not between them and it:
+    // expanding upward twice must read 1-6, 7-26, not 7-26, 1-6.  A bounded
+    // gap fills in one fetch, so there it is the row itself.
+    let anchor = row;
+    while (anchor.previousElementSibling?.classList.contains('context-loaded')) anchor = anchor.previousElementSibling;
+    if (frag) anchor.insertAdjacentHTML('beforebegin', frag);
 
     if (bounded || gapStartNew <= 1) {
       disableExpander(row); // gap fully filled (or reached top of file)
